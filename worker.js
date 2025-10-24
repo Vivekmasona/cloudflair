@@ -1,69 +1,92 @@
-export default {
-  async fetch(req, env) {
-    if (req.headers.get("upgrade") !== "websocket") {
-      return new Response("🎧 Bihar FM WebSocket Server Live", { status: 200 });
+// server.js
+// Simple chat server with app-level heartbeat for Cloudflare compatibility
+import http from "http";
+import WebSocket, { WebSocketServer } from "ws";
+
+const PORT = process.env.PORT || 8080;
+const server = http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end("WebSocket chat server running.");
+});
+
+const wss = new WebSocketServer({ server });
+
+/** Broadcast helper */
+function broadcast(data, except = null) {
+  const message = JSON.stringify(data);
+  for (const client of wss.clients) {
+    if (client.readyState === WebSocket.OPEN && client !== except) {
+      client.send(message);
     }
-
-    const [client, server] = Object.values(new WebSocketPair());
-    handleSession(server);
-    return new Response(null, { status: 101, webSocket: client });
-  },
-};
-
-const clients = new Map(); // id -> { ws, role }
-
-function broadcastToListeners(data) {
-  for (const [, c] of clients)
-    if (c.role === "listener" && c.ws.readyState === 1)
-      c.ws.send(JSON.stringify(data));
+  }
 }
 
-function safeSend(ws, data) {
-  if (ws.readyState === 1) ws.send(JSON.stringify(data));
-}
+/** Application-level heartbeat interval (send "ping" message) */
+const APP_PING_INTERVAL = 25 * 1000; // 25 seconds
 
-function handleSession(ws) {
-  const id = crypto.randomUUID();
-  clients.set(id, { ws, role: null });
-  console.log("Client connected:", id);
+wss.on("connection", (ws, req) => {
+  ws.isAlive = true;
+  ws.id = Math.random().toString(36).slice(2, 9);
+  console.log("Client connected:", ws.id);
 
-  ws.accept();
+  // When client sends a message
+  ws.on("message", (msg) => {
+    let data;
+    try { data = JSON.parse(msg.toString()); } catch(e) { return; }
 
-  ws.addEventListener("message", (event) => {
-    let msg;
-    try {
-      msg = JSON.parse(event.data);
-    } catch {
+    if (data?.type === "pong") {
+      // application-level pong from client
+      ws.isAlive = true;
       return;
     }
 
-    const { type, role, payload } = msg;
-
-    if (type === "register") {
-      clients.get(id).role = role;
-      console.log(`Registered ${id} as ${role}`);
+    if (data?.type === "join") {
+      ws.name = data.name || "Anonymous";
+      broadcast({ type: "system", text: `${ws.name} joined.`, ts: Date.now() });
       return;
     }
 
-    if (type === "metadata") {
-      console.log(`Metadata relay: ${payload?.title || "Unknown"}`);
-      broadcastToListeners({
-        type: "metadata",
-        title: payload.title,
-        artist: payload.artist,
-        cover: payload.cover,
-      });
+    if (data?.type === "chat") {
+      const payload = {
+        type: "chat",
+        from: ws.name || "Anonymous",
+        text: data.text,
+        ts: Date.now(),
+      };
+      broadcast(payload);
       return;
     }
 
-    if (type === "message") {
-      broadcastToListeners({ type: "message", from: id, text: payload.text });
-      return;
-    }
+    // unknown message types can be logged
+    console.log("Unknown message:", data);
   });
 
-  ws.addEventListener("close", () => {
-    clients.delete(id);
-    console.log("Client disconnected:", id);
+  ws.on("close", () => {
+    console.log("Client disconnected:", ws.id);
+    broadcast({ type: "system", text: `${ws.name || "A user"} left.`, ts: Date.now() });
   });
-}
+
+  ws.on("error", (err) => {
+    console.error("WebSocket error:", err);
+  });
+});
+
+/** Periodic app-level ping to all clients */
+setInterval(() => {
+  for (const client of wss.clients) {
+    if (client.readyState !== WebSocket.OPEN) continue;
+    // If client hasn't answered our last pong, consider it dead and terminate
+    if (client.isAlive === false) {
+      console.log("Terminating stale client:", client.id);
+      try { client.terminate(); } catch(e) {}
+      continue;
+    }
+    client.isAlive = false;
+    // send small JSON ping — Cloudflare treats data frames as activity
+    client.send(JSON.stringify({ type: "ping", ts: Date.now() }));
+  }
+}, APP_PING_INTERVAL);
+
+server.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
+});
