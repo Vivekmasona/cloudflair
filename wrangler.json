@@ -1,5 +1,5 @@
 {
   "name": "fmconnect-worker",
   "main": "src/worker.js",
-  "compatibility_date": "2025-10-21"
+  "compatibility_date": "2025-10-24"
 }
