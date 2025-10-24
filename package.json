@@ -1,11 +1,11 @@
 {
-  "name": "fmconnect-worker",
+  "name": "cf-ws-chat",
   "version": "1.0.0",
-  "private": true,
+  "type": "module",
   "scripts": {
-    "deploy": "wrangler deploy"
+    "start": "node server.js"
   },
-  "devDependencies": {
-    "wrangler": "^4.44.0"
+  "dependencies": {
+    "ws": "^8.13.0"
   }
 }
