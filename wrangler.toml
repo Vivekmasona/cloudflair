@@ -1,1 +1,10 @@
+name = "ws-chat"
+main = "src/worker.js"
+compatibility_date = "2025-10-24"
 
+[[durable_objects.bindings]]
+name = "CHAT_ROOM"
+class_name = "ChatRoom"
+
+[vars]
+ROOM_NAME = "global"
